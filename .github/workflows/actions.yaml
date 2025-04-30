@@ -53,22 +53,17 @@ jobs:
             type=raw,value=latest,enable=${{ github.event.inputs.push_latest == 'true' }}
             type=sha,format=short
       
-     
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
-            context: ./${{ matrix.service }}
-            file: ./${{ matrix.service }}/Dockerfile
-            push: true
-            tags: ${{ steps.meta.outputs.tags }}
-            labels: ${{ steps.meta.outputs.labels }}
-            cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:buildcache
-            cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:buildcache,mode=max
-            build-args: |
-                VERSION=${{ github.event.inputs.version }}
-                BUILD_DATE=${{ github.event.repository.updated_at }}
-                COMMIT_SHA=${{ github.sha }}
-
-
-
-                
+          context: ./${{ matrix.service }}
+          file: ./${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:buildcache,mode=max
+          build-args: |
+            VERSION=${{ github.event.inputs.version }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            COMMIT_SHA=${{ github.sha }}
