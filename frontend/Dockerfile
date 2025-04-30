@@ -20,3 +20,4 @@ EXPOSE 80
 
 # No need to specify CMD as the nginx image already has a default CMD
 # that starts the nginx server
+
