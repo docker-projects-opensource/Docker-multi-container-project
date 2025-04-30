@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Semantic version (e.g., 1.0.0)'
+        description: 'Version (e.g., 1.0.0)'
         required: true
         default: '1.0.0'
       environment:
-        description: 'Environment to deploy to'
+        description: 'Environment'
         required: true
         type: choice
         options:
@@ -17,53 +17,54 @@ on:
           - prod
         default: 'dev'
       push_latest:
-        description: 'Also push as latest tag'
+        description: 'Tag as latest'
         required: true
         type: boolean
         default: false
 
 jobs:
-  build-and-push:
+  build-push:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         service: [frontend, backend, database]
     
     steps:
-      - name: Check out the repo
+      - name: Checkout code
         uses: actions/checkout@v3
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
       
-      - name: Log in to Docker Hub
+      - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: ${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}
-          tags: |
-            type=raw,value=${{ github.event.inputs.version }}-${{ github.event.inputs.environment }}
-            type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event.inputs.push_latest == 'true' }}
-            type=raw,value=latest,enable=${{ github.event.inputs.push_latest == 'true' }}
-            type=sha,format=short
+      - name: Prepare Tags
+        id: prep
+        run: |
+          DOCKER_IMAGE=${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}
+          VERSION_TAG=${DOCKER_IMAGE}:${{ github.event.inputs.version }}-${{ github.event.inputs.environment }}
+          SHA_TAG=${DOCKER_IMAGE}:sha-${GITHUB_SHA::8}
+          
+          TAGS="${VERSION_TAG},${SHA_TAG}"
+          
+          if [[ "${{ github.event.inputs.push_latest }}" == "true" ]]; then
+            TAGS="${TAGS},${DOCKER_IMAGE}:latest,${DOCKER_IMAGE}:${{ github.event.inputs.version }}"
+          fi
+          
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
       
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v4
         with:
           context: ./${{ matrix.service }}
           file: ./${{ matrix.service }}/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:buildcache
-          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:buildcache,mode=max
+          tags: ${{ steps.prep.outputs.tags }}
           build-args: |
             VERSION=${{ github.event.inputs.version }}
-            BUILD_DATE=${{ github.event.repository.updated_at }}
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
             COMMIT_SHA=${{ github.sha }}
