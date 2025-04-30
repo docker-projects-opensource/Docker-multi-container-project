@@ -23,18 +23,11 @@ on:
         default: false
 
 jobs:
-  build-push:
+  frontend:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        service: [frontend, backend, database]
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
       
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -42,28 +35,70 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       
-      - name: Prepare Tags
-        id: prep
-        run: |
-          DOCKER_IMAGE=${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}
-          VERSION_TAG=${DOCKER_IMAGE}:${{ github.event.inputs.version }}-${{ github.event.inputs.environment }}
-          SHA_TAG=${DOCKER_IMAGE}:sha-${GITHUB_SHA::8}
-          
-          TAGS="${VERSION_TAG},${SHA_TAG}"
-          
-          if [[ "${{ github.event.inputs.push_latest }}" == "true" ]]; then
-            TAGS="${TAGS},${DOCKER_IMAGE}:latest,${DOCKER_IMAGE}:${{ github.event.inputs.version }}"
-          fi
-          
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
-      
-      - name: Build and push
+      - name: Build and push frontend
         uses: docker/build-push-action@v4
         with:
-          context: ./${{ matrix.service }}
-          file: ./${{ matrix.service }}/Dockerfile
+          context: ./frontend
           push: true
-          tags: ${{ steps.prep.outputs.tags }}
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/frontend:${{ github.event.inputs.version }}-${{ github.event.inputs.environment }}
+            ${{ secrets.DOCKER_USERNAME }}/frontend:sha-${{ github.sha }}
+            ${{ github.event.inputs.push_latest == 'true' && format('{0}/frontend:latest', secrets.DOCKER_USERNAME) || '' }}
+            ${{ github.event.inputs.push_latest == 'true' && format('{0}/frontend:{1}', secrets.DOCKER_USERNAME, github.event.inputs.version) || '' }}
+          build-args: |
+            VERSION=${{ github.event.inputs.version }}
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            COMMIT_SHA=${{ github.sha }}
+  
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Build and push backend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/backend:${{ github.event.inputs.version }}-${{ github.event.inputs.environment }}
+            ${{ secrets.DOCKER_USERNAME }}/backend:sha-${{ github.sha }}
+            ${{ github.event.inputs.push_latest == 'true' && format('{0}/backend:latest', secrets.DOCKER_USERNAME) || '' }}
+            ${{ github.event.inputs.push_latest == 'true' && format('{0}/backend:{1}', secrets.DOCKER_USERNAME, github.event.inputs.version) || '' }}
+          build-args: |
+            VERSION=${{ github.event.inputs.version }}
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            COMMIT_SHA=${{ github.sha }}
+  
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Build and push database
+        uses: docker/build-push-action@v4
+        with:
+          context: ./database
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/database:${{ github.event.inputs.version }}-${{ github.event.inputs.environment }}
+            ${{ secrets.DOCKER_USERNAME }}/database:sha-${{ github.sha }}
+            ${{ github.event.inputs.push_latest == 'true' && format('{0}/database:latest', secrets.DOCKER_USERNAME) || '' }}
+            ${{ github.event.inputs.push_latest == 'true' && format('{0}/database:{1}', secrets.DOCKER_USERNAME, github.event.inputs.version) || '' }}
           build-args: |
             VERSION=${{ github.event.inputs.version }}
             BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
