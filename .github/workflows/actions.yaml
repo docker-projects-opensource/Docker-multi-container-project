@@ -34,8 +34,8 @@ jobs:
           context: ./${{ github.event.inputs.service }}
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/${{ github.event.inputs.service }}:latest
-            ${{ secrets.DOCKER_USERNAME }}/${{ github.event.inputs.service }}:${{ github.sha }}
+            docker.io/${{ secrets.DOCKER_USERNAME }}/${{ github.event.inputs.service }}:latest
+            docker.io/${{ secrets.DOCKER_USERNAME }}/${{ github.event.inputs.service }}:${{ github.sha }}
           
       - name: Image digest
         run: echo "Image has been pushed successfully"
