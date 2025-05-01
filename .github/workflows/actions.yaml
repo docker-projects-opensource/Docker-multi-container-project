@@ -11,22 +11,18 @@ on:
         - frontend
         - backend
         - database
-      image_tag:
-        description: 'Docker image tag (e.g., latest, v1.0)'
-        required: true
+      tag:
+        description: 'Tag for the image (default: latest)'
+        required: false
         default: 'latest'
         type: string
-     
 
 jobs:
-  docker-build-push:
+  build-push:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
       
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -34,20 +30,18 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       
-      - name: Print build information
+      - name: Build and push
         run: |
-          echo "Building service: ${{ github.event.inputs.service }}"
-          echo "Image name: ${{ github.event.inputs.image_name }}"
-          echo "Image tag: ${{ github.event.inputs.image_tag }}"
+          # Simple variables
+          SERVICE=${{ github.event.inputs.service }}
+          TAG=${{ github.event.inputs.tag }}
+          USERNAME=${{ secrets.DOCKER_USERNAME }}
           
-      - name: Build and push Docker image
-        run: |
-          # Ensure we're using the correct repository format with username
-          cd ${{ github.event.inputs.service }}
-          # Explicitly use the Docker Hub username from secrets to ensure proper namespace
-          IMAGE_NAME="${{ secrets.DOCKER_USERNAME }}/${{ github.event.inputs.service }}"
-          echo "Building image: $IMAGE_NAME:${{ github.event.inputs.image_tag }}"
+          # Print info
+          echo "Building service: $SERVICE"
+          echo "Image tag: $TAG"
           
-          # Build and push with proper namespace
-          docker build -t $IMAGE_NAME:${{ github.event.inputs.image_tag }} .
-          docker push $IMAGE_NAME:${{ github.event.inputs.image_tag }}
+          # Basic Docker build & push
+          cd $SERVICE
+          docker build -t $USERNAME/$SERVICE:$TAG .
+          docker push $USERNAME/$SERVICE:$TAG
