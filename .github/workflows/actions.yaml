@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Simple Docker Build and Push
 
 on:
   workflow_dispatch:
@@ -11,31 +11,40 @@ on:
         - frontend
         - backend
         - database
+      image_name:
+        description: 'Docker image name (e.g., myusername/frontend)'
+        required: true
+        type: string
+      image_tag:
+        description: 'Docker image tag'
+        required: true
+        default: 'latest'
+        type: string
 
 jobs:
-  build-and-push:
+  docker-build-push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+      
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-        
+      
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Print build information
+        run: |
+          echo "Building service: ${{ github.event.inputs.service }}"
+          echo "Image name: ${{ github.event.inputs.image_name }}"
+          echo "Image tag: ${{ github.event.inputs.image_tag }}"
           
-      - name: Build and push
-        uses: docker/build-push-action@v4
-        with:
-          context: ./${{ github.event.inputs.service }}
-          push: true
-          tags: |
-            docker.io/${{ secrets.DOCKER_USERNAME }}/${{ github.event.inputs.service }}:latest
-            docker.io/${{ secrets.DOCKER_USERNAME }}/${{ github.event.inputs.service }}:${{ github.sha }}
-          
-      - name: Image digest
-        run: echo "Image has been pushed successfully"
+      - name: Build and push Docker image
+        run: |
+          cd ${{ github.event.inputs.service }}
+          docker build -t ${{ github.event.inputs.image_name }}:${{ github.event.inputs.image_tag }} .
+          docker push ${{ github.event.inputs.image_name }}:${{ github.event.inputs.image_tag }}
