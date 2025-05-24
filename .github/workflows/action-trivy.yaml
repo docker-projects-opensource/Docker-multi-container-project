@@ -1,0 +1,97 @@
+name: Docker Build, Scan and Push
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Select service to build'
+        required: true
+        type: choice
+        options:
+        - frontend
+        - backend
+        - database
+      tag:
+        description: 'Tag for the image (default: latest)'
+        required: false
+        default: 'latest'
+        type: string
+      severity:
+        description: 'Fail on vulnerabilities of this severity or higher'
+        required: false
+        default: 'HIGH,CRITICAL'
+        type: choice
+        options:
+        - 'LOW,MEDIUM,HIGH,CRITICAL'
+        - 'MEDIUM,HIGH,CRITICAL'
+        - 'HIGH,CRITICAL'
+        - 'CRITICAL'
+
+jobs:
+  build-scan-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Build Docker image
+        run: |
+          # Simple variables
+          SERVICE=${{ github.event.inputs.service }}
+          TAG=${{ github.event.inputs.tag }}
+          USERNAME=${{ secrets.DOCKER_USERNAME }}
+          
+          # Print info
+          echo "Building service: $SERVICE"
+          echo "Image tag: $TAG"
+          
+          # Build Docker image (don't push yet)
+          cd $SERVICE
+          docker build -t $USERNAME/$SERVICE:$TAG .
+          
+          # Export image name for later steps
+          echo "IMAGE_NAME=$USERNAME/$SERVICE:$TAG" >> $GITHUB_ENV
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: ${{ github.event.inputs.severity }}
+          exit-code: '1'  # Fail the workflow if vulnerabilities are found
+      
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()  # Upload results even if scan fails
+        with:
+          sarif_file: 'trivy-results.sarif'
+      
+      - name: Run Trivy vulnerability scanner (table output)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}
+          format: 'table'
+          severity: ${{ github.event.inputs.severity }}
+      
+      - name: Push Docker image
+        if: success()  # Only push if all previous steps succeeded
+        run: |
+          echo "Security scan passed! Pushing image..."
+          docker push ${{ env.IMAGE_NAME }}
+          echo "✅ Successfully pushed ${{ env.IMAGE_NAME }}"
+      
+      - name: Security scan failed
+        if: failure()
+        run: |
+          echo "❌ Security scan failed! Image was not pushed to Docker Hub."
+          echo "Please review the vulnerabilities above and fix them before pushing."
+          exit 1
