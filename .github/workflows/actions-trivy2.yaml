@@ -1,0 +1,58 @@
+name: Docker Build, Scan and Push
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Select service to build'
+        required: true
+        type: choice
+        options:
+        - frontend
+        - backend
+        - database
+      tag:
+        description: 'Tag for the image (default: latest)'
+        required: false
+        default: 'latest'
+        type: string
+
+jobs:
+  build-scan-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Build Docker image
+        run: |
+          SERVICE=${{ github.event.inputs.service }}
+          TAG=${{ github.event.inputs.tag }}
+          USERNAME=${{ secrets.DOCKER_USERNAME }}
+          
+          echo "Building service: $SERVICE"
+          echo "Image tag: $TAG"
+          
+          cd $SERVICE
+          docker build -t $USERNAME/$SERVICE:$TAG .
+          
+          echo "IMAGE_NAME=$USERNAME/$SERVICE:$TAG" >> $GITHUB_ENV
+      
+      - name: Run Trivy security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '0'  # Don't fail the workflow, just show results
+      
+      - name: Push Docker image
+        run: |
+          echo "Pushing image to Docker Hub..."
+          docker push ${{ env.IMAGE_NAME }}
+          echo "✅ Successfully pushed ${{ env.IMAGE_NAME }}"
