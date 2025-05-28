@@ -7,6 +7,7 @@ spec:
     app: backend
   ports:
     - port: 3000
+      targetPort: 3000
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -23,11 +24,74 @@ spec:
         app: backend
     spec:
       containers:
+      
+      # CONTAINER 1: Your Backend Application
       - name: backend
-        image: k3d-myapp-backend:latest
+        image: k3d-myapp-backend:latest # Replace with your actual image name
         imagePullPolicy: IfNotPresent
-        envFrom:
-        - configMapRef:
-            name: app-config
-        - secretRef:
-            name: db-credentials
+        ports:
+        - containerPort: 3000
+        
+        # Environment variables from secrets
+        env:
+        - name: DB_HOST
+          value: "127.0.0.1"  # Connect to proxy on localhost!
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_NAME
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_PASSWORD
+        - name: NODE_ENV
+          value: "development"
+        - name: API_PORT
+          value: "3000"
+      
+      # CONTAINER 2: Cloud SQL Proxy (Sidecar)
+      - name: cloudsql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.8.0
+        
+        # Command arguments for the proxy
+        args:
+          - "--structured-logs"
+          - "--port=5432"
+          - "--private-ip"  # Add this line
+          - "$(INSTANCE_CONNECTION_NAME)"
+        
+        # Get connection name from secret
+        env:
+        - name: INSTANCE_CONNECTION_NAME
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: INSTANCE_CONNECTION_NAME
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /secrets/service-account.json
+        
+        # Mount the service account key
+        volumeMounts:
+        - name: cloudsql-key
+          mountPath: /secrets
+          readOnly: true
+        
+        # Security settings
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+      
+      # Volume for service account key
+      volumes:
+      - name: cloudsql-key
+        secret:
+          secretName: cloudsql-key

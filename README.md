@@ -4,6 +4,7 @@ This project demonstrates Docker best practices with a simple multi-container ap
 
 ![alt text](image.png)
 
+
 1. **Frontend**: A simple Nginx web server serving static HTML, CSS, and JavaScript
 2. **Backend**: A Node.js/Express API server
 3. **Database**: A PostgreSQL database for data persistence

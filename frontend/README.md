@@ -2,6 +2,25 @@
 
 This is the frontend component of our Docker learning project. It's a simple Nginx web server that serves static HTML, CSS, and JavaScript files.
 
+========
+# Tag frontend
+docker tag 3tier-docker-compose-project-frontend arunponugotii/frontend:latestmvp
+
+# Tag backend
+docker tag 3tier-docker-compose-project-backend arunponugotii/backend:latestmvp
+
+# Tag database
+docker tag 3tier-docker-compose-project-database arunponugotii/database:latest
+# Push frontend
+docker push arunponugotii/frontend:latestmvp
+
+# Push backend
+docker push arunponugotii/backend:latestmvp
+
+# Push database
+docker push YOUR_DOCKERHUB_USERNAME/database:latest
+
+=======
 ## What is this?
 
 This component is responsible for the user interface of our application. It provides a simple web interface where users can view and add messages.

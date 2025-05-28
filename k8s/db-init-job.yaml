@@ -1,0 +1,89 @@
+# db-init-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-init
+spec:
+  template:
+    spec:
+      containers:
+      - name: postgres-client
+        image: postgres:15
+        env:
+        - name: PGHOST
+          value: "127.0.0.1"
+        - name: PGPORT
+          value: "5432"
+        - name: PGDATABASE
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_NAME
+        - name: PGUSER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_PASSWORD
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Waiting for database connection..."
+          until psql -c '\q'; do
+            echo "PostgreSQL is unavailable - sleeping"
+            sleep 1
+          done
+          
+          echo "PostgreSQL is up - executing commands"
+          psql <<EOF
+          -- Create messages table if it doesn't exist
+          CREATE TABLE IF NOT EXISTS messages (
+              id SERIAL PRIMARY KEY,
+              author VARCHAR(100) NOT NULL,
+              content TEXT NOT NULL,
+              created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+          );
+
+          -- Add some initial data
+          INSERT INTO messages (author, content) VALUES
+          ('System', 'Welcome to the Cloud SQL message board!'),
+          ('CloudSQL', 'Now running on Google Cloud SQL!')
+          ON CONFLICT DO NOTHING;
+          
+          -- Show the data
+          SELECT * FROM messages;
+          EOF
+          
+      # Cloud SQL Proxy sidecar
+      - name: cloudsql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.8.0
+        args:
+          - "--structured-logs"
+          - "--port=5432"
+          - "--private-ip"
+          - "$(INSTANCE_CONNECTION_NAME)"
+        env:
+        - name: INSTANCE_CONNECTION_NAME
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: INSTANCE_CONNECTION_NAME
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /secrets/service-account.json
+        volumeMounts:
+        - name: cloudsql-key
+          mountPath: /secrets
+          readOnly: true
+      
+      volumes:
+      - name: cloudsql-key
+        secret:
+          secretName: cloudsql-key
+      
+      restartPolicy: Never
+  backoffLimit: 4

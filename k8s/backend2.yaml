@@ -1,0 +1,33 @@
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: backend
+# spec:
+#   selector:
+#     app: backend
+#   ports:
+#     - port: 3000
+# ---
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: backend
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: backend
+#   template:
+#     metadata:
+#       labels:
+#         app: backend
+#     spec:
+#       containers:
+#       - name: backend
+#         image: k3d-myapp-backend:latest
+#         imagePullPolicy: IfNotPresent
+#         envFrom:
+#         - configMapRef:
+#             name: app-config
+#         - secretRef:
+#             name: db-credentials
