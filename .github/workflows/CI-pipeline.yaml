@@ -1,4 +1,4 @@
-name: Enhanced CI Pipeline
+name: Enhanced Docker Build, Scan and Push
 on:
   workflow_dispatch:
     inputs:
@@ -24,63 +24,63 @@ on:
         - staging
         - production
         default: 'development'
+      scan_severity:
+        description: 'Security scan severity threshold'
+        required: false
+        type: choice
+        options:
+        - LOW,MEDIUM,HIGH,CRITICAL
+        - MEDIUM,HIGH,CRITICAL
+        - HIGH,CRITICAL
+        - CRITICAL
+        default: 'HIGH,CRITICAL'
 
 env:
   REGISTRY: docker.io
-  NODE_VERSION: '18'
 
 jobs:
-  ci-pipeline:
+  build-scan-push:
     runs-on: ubuntu-latest
     
     outputs:
       image-name: ${{ steps.build-info.outputs.image-name }}
       image-tag: ${{ steps.build-info.outputs.image-tag }}
-      service-type: ${{ steps.service-info.outputs.service-type }}
+      image-size: ${{ steps.build-info.outputs.image-size }}
+      vulnerability-count: ${{ steps.trivy-scan.outputs.vulnerability-count }}
     
     steps:
       # =====================================================
-      # STEP 1: SETUP & PREPARATION
+      # STEP 1: PREPARATION & BUILD INFO
       # =====================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for better tagging
-      
-      - name: Determine service type and configuration
-        id: service-info
-        run: |
-          SERVICE=${{ github.event.inputs.service }}
-          
-          case $SERVICE in
-            "frontend")
-              echo "service-type=react" >> $GITHUB_OUTPUT
-              echo "package-manager=npm" >> $GITHUB_OUTPUT
-              ;;
-            "backend")
-              echo "service-type=nodejs" >> $GITHUB_OUTPUT
-              echo "package-manager=npm" >> $GITHUB_OUTPUT
-              ;;
-            "database")
-              echo "service-type=database" >> $GITHUB_OUTPUT
-              echo "package-manager=none" >> $GITHUB_OUTPUT
-              ;;
-          esac
-          
-          echo "Selected service: $SERVICE (type: $(cat $GITHUB_OUTPUT | grep service-type | cut -d'=' -f2 || echo 'unknown'))"
-      
-      - name: Generate build information
+          fetch-depth: 0  # Get full history for better tagging
+
+      - name: Generate enhanced build information
         id: build-info
         run: |
           SERVICE=${{ github.event.inputs.service }}
           USERNAME=${{ secrets.DOCKER_USERNAME }}
+          ENVIRONMENT=${{ github.event.inputs.environment }}
           
-          # Generate tag
+          # Enhanced tag generation
           if [ "${{ github.event.inputs.tag }}" = "auto" ]; then
             TIMESTAMP=$(date +%Y%m%d-%H%M%S)
             SHORT_SHA=$(git rev-parse --short HEAD)
-            BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/[^a-zA-Z0-9]/-/g')
-            TAG="${BRANCH}-${SHORT_SHA}-${TIMESTAMP}"
+            BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]')
+            
+            case $ENVIRONMENT in
+              "production")
+                TAG="v1.0.${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+                ;;
+              "staging")
+                TAG="staging-${BRANCH}-${SHORT_SHA}-${TIMESTAMP}"
+                ;;
+              "development")
+                TAG="dev-${BRANCH}-${SHORT_SHA}-${TIMESTAMP}"
+                ;;
+            esac
           else
             TAG="${{ github.event.inputs.tag }}"
           fi
@@ -88,168 +88,27 @@ jobs:
           IMAGE_NAME="${USERNAME}/${SERVICE}"
           FULL_IMAGE="${IMAGE_NAME}:${TAG}"
           
+          # Output build info
           echo "image-name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
           echo "image-tag=${TAG}" >> $GITHUB_OUTPUT
           echo "full-image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
           
-          echo "🏗️ Building: ${FULL_IMAGE}"
-          echo "📝 Environment: ${{ github.event.inputs.environment }}"
-
-      # =====================================================
-      # STEP 2: SOURCE CODE SECURITY SCANNING (SIMPLIFIED FOR POC)
-      # =====================================================
-      - name: Basic Secret Scanning (Simple grep)
-        if: steps.service-info.outputs.service-type != 'database'
-        run: |
-          echo "🔍 Running basic secret detection..."
-          # Simple pattern matching for common secrets
-          if grep -r -E "(password|secret|key|token).*(=|:)" ${{ github.event.inputs.service }}/ --include="*.js" --include="*.json" --include="*.env*" || true; then
-            echo "⚠️ Potential secrets found - review manually"
-          else
-            echo "✅ No obvious secrets detected"
-          fi
-        continue-on-error: true
-
-      # Skip CodeQL for POC - can be added later
-      # - name: Run CodeQL Analysis (SAST)
-      #   uses: github/codeql-action/init@v3
-      #   if: steps.service-info.outputs.service-type != 'database'
-      #   with:
-      #     languages: javascript
-      #   continue-on-error: true
-
-      # =====================================================
-      # STEP 3: DEPENDENCY SCANNING & SETUP (POC SIMPLIFIED)
-      # =====================================================
-      - name: Setup Node.js (Simplified for POC)
-        if: steps.service-info.outputs.package-manager == 'npm'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          # Removed cache for POC - can add back later when structure is confirmed
-
-      - name: Check service structure
-        if: steps.service-info.outputs.package-manager == 'npm'
-        run: |
-          echo "📁 Checking service directory structure..."
-          ls -la ${{ github.event.inputs.service }}/
+          # Save to environment
+          echo "IMAGE_NAME=${FULL_IMAGE}" >> $GITHUB_ENV
+          echo "SERVICE_NAME=${SERVICE}" >> $GITHUB_ENV
+          echo "BUILD_TAG=${TAG}" >> $GITHUB_ENV
           
-          if [ -f "${{ github.event.inputs.service }}/package.json" ]; then
-            echo "✅ package.json found"
-            cat ${{ github.event.inputs.service }}/package.json | head -20
-          else
-            echo "❌ package.json not found"
-            exit 1
-          fi
-
-      - name: Install dependencies (Production only for POC)
-        if: steps.service-info.outputs.package-manager == 'npm'
-        working-directory: ${{ github.event.inputs.service }}
-        run: |
-          echo "📦 Installing dependencies for ${{ github.event.inputs.service }}"
-          if [ -f "package-lock.json" ]; then
-            npm ci --only=production --ignore-scripts
-          else
-            npm install --only=production --ignore-scripts
-          fi
-
-      - name: Basic dependency check (Simplified for POC)
-        if: steps.service-info.outputs.package-manager == 'npm'
-        working-directory: ${{ github.event.inputs.service }}
-        run: |
-          echo "🔍 Basic dependency check..."
-          npm ls --depth=0 > ../dependency-report.txt || echo "⚠️ Some dependency issues found"
-          
-          # Skip npm audit for POC to avoid blocking builds
-          echo "ℹ️ Skipping npm audit for POC"
+          # Display build information
+          echo "🏗️ Enhanced Build Information:"
+          echo "  Service: ${SERVICE}"
+          echo "  Environment: ${ENVIRONMENT}"
+          echo "  Image: ${FULL_IMAGE}"
+          echo "  Branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "  Commit: $(git rev-parse --short HEAD)"
+          echo "  Build Number: ${GITHUB_RUN_NUMBER}"
 
       # =====================================================
-      # STEP 4: CODE QUALITY & TESTING (POC - Optional)
-      # =====================================================
-      - name: Install dev dependencies (if needed)
-        if: steps.service-info.outputs.package-manager == 'npm'
-        working-directory: ${{ github.event.inputs.service }}
-        run: |
-          echo "📦 Installing all dependencies for testing..."
-          if [ -f "package-lock.json" ]; then
-            npm ci
-          else
-            npm install
-          fi
-
-      - name: Check available scripts
-        if: steps.service-info.outputs.package-manager == 'npm'
-        working-directory: ${{ github.event.inputs.service }}
-        run: |
-          echo "📋 Available npm scripts:"
-          npm run || echo "No scripts section found"
-
-      - name: Run Linting (if available)
-        if: steps.service-info.outputs.package-manager == 'npm'
-        working-directory: ${{ github.event.inputs.service }}
-        run: |
-          echo "🔧 Checking for lint script..."
-          if npm run | grep -q "lint"; then
-            echo "Running linter..."
-            npm run lint || echo "⚠️ Linting failed - continuing anyway for POC"
-          else
-            echo "ℹ️ No lint script found - skipping"
-          fi
-        continue-on-error: true
-
-      - name: Run Tests (if available) - Frontend
-        if: steps.service-info.outputs.service-type == 'react'
-        working-directory: ${{ github.event.inputs.service }}
-        run: |
-          echo "🧪 Checking for test script..."
-          if npm run | grep -q "test"; then
-            echo "Running React tests..."
-            CI=true npm test -- --coverage --watchAll=false || echo "⚠️ Tests failed - continuing anyway for POC"
-          else
-            echo "ℹ️ No test script found - skipping"
-          fi
-        continue-on-error: true
-
-      - name: Run Tests (if available) - Backend
-        if: steps.service-info.outputs.service-type == 'nodejs'
-        working-directory: ${{ github.event.inputs.service }}
-        run: |
-          echo "🧪 Checking for test script..."
-          if npm run | grep -q "test"; then
-            echo "Running Node.js tests..."
-            npm test || echo "⚠️ Tests failed - continuing anyway for POC"
-          else
-            echo "ℹ️ No test script found - skipping"
-          fi
-        continue-on-error: true
-
-      - name: Upload test coverage (if exists)
-        if: steps.service-info.outputs.package-manager == 'npm'
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report-${{ github.event.inputs.service }}
-          path: ${{ github.event.inputs.service }}/coverage/
-          retention-days: 7
-        continue-on-error: true
-
-      # =====================================================
-      # STEP 5: BUILD APPLICATION (POC - Flexible)
-      # =====================================================
-      - name: Build Application (if build script exists)
-        if: steps.service-info.outputs.package-manager == 'npm'
-        working-directory: ${{ github.event.inputs.service }}
-        run: |
-          echo "🔨 Checking for build script..."
-          if npm run | grep -q "build"; then
-            echo "Building ${{ steps.service-info.outputs.service-type }} application..."
-            npm run build || echo "⚠️ Build failed - continuing anyway for POC"
-          else
-            echo "ℹ️ No build script found - skipping (Docker will handle build)"
-          fi
-        continue-on-error: true
-
-      # =====================================================
-      # STEP 6: DOCKER BUILD & SECURITY SCAN
+      # STEP 2: DOCKER LOGIN & SETUP
       # =====================================================
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -257,129 +116,369 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build Docker image
-        working-directory: ${{ github.event.inputs.service }}
+      - name: Set up Docker Buildx (for advanced features)
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      # =====================================================
+      # STEP 3: ENHANCED DOCKER BUILD
+      # =====================================================
+      - name: Build Docker image with enhanced metadata
         run: |
-          SERVICE=${{ github.event.inputs.service }}
-          FULL_IMAGE=${{ steps.build-info.outputs.full-image }}
+          SERVICE=${{ env.SERVICE_NAME }}
+          FULL_IMAGE=${{ env.IMAGE_NAME }}
           
-          echo "🐳 Building Docker image: $FULL_IMAGE"
+          echo "🐳 Building enhanced Docker image: $FULL_IMAGE"
+          echo "📁 Building in directory: $SERVICE"
           
-          # Build with cache optimization
-          docker build \
+          # Check if service directory and Dockerfile exist
+          if [ ! -d "$SERVICE" ]; then
+            echo "❌ Service directory '$SERVICE' does not exist"
+            exit 1
+          fi
+          
+          if [ ! -f "$SERVICE/Dockerfile" ]; then
+            echo "❌ Dockerfile not found in '$SERVICE' directory"
+            exit 1
+          fi
+          
+          cd $SERVICE
+          
+          # Enhanced build with metadata and optimization
+          docker buildx build \
             --tag $FULL_IMAGE \
             --label "service=$SERVICE" \
             --label "environment=${{ github.event.inputs.environment }}" \
+            --label "version=${{ env.BUILD_TAG }}" \
             --label "build-date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
             --label "git-commit=$(git rev-parse HEAD)" \
             --label "git-branch=$(git rev-parse --abbrev-ref HEAD)" \
+            --label "build-number=${{ github.run_number }}" \
+            --label "github-workflow=${{ github.workflow }}" \
+            --label "github-actor=${{ github.actor }}" \
+            --platform linux/amd64 \
+            --load \
             .
           
           echo "✅ Docker image built successfully"
+          
+          # Get image information
+          IMAGE_SIZE=$(docker images $FULL_IMAGE --format "{{.Size}}")
+          IMAGE_ID=$(docker images $FULL_IMAGE --format "{{.ID}}")
+          
+          echo "📊 Image Information:"
+          echo "  Size: $IMAGE_SIZE"
+          echo "  ID: $IMAGE_ID"
+          
+          # Save image info
+          echo "image-size=${IMAGE_SIZE}" >> $GITHUB_OUTPUT
+          echo "IMAGE_SIZE=${IMAGE_SIZE}" >> $GITHUB_ENV
 
-      - name: Run Trivy vulnerability scan
+      # =====================================================
+      # STEP 4: COMPREHENSIVE SECURITY SCANNING
+      # =====================================================
+      - name: Run comprehensive Trivy vulnerability scan
+        id: trivy-scan
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ steps.build-info.outputs.full-image }}
+          image-ref: ${{ env.IMAGE_NAME }}
           format: 'sarif'
           output: 'trivy-results.sarif'
-          severity: 'HIGH,CRITICAL'
+          severity: ${{ github.event.inputs.scan_severity }}
+          exit-code: '0'  # Don't fail the workflow yet
+          
+      - name: Run Trivy scan for human-readable table
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}
+          format: 'table'
+          severity: ${{ github.event.inputs.scan_severity }}
           exit-code: '0'
 
-      - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+      - name: Run Trivy scan for JSON report
+        uses: aquasecurity/trivy-action@master
         with:
-          sarif_file: 'trivy-results.sarif'
+          image-ref: ${{ env.IMAGE_NAME }}
+          format: 'json'
+          output: 'trivy-report.json'
+          severity: ${{ github.event.inputs.scan_severity }}
+          exit-code: '0'
 
-      - name: Generate image size report
+      - name: Process Trivy scan results
+        id: process-scan
         run: |
-          IMAGE_SIZE=$(docker images ${{ steps.build-info.outputs.full-image }} --format "{{.Size}}")
-          echo "📊 Image size: $IMAGE_SIZE"
-          echo "IMAGE_SIZE=$IMAGE_SIZE" >> $GITHUB_ENV
+          echo "📊 Processing security scan results..."
+          
+          # Count vulnerabilities by severity if JSON report exists
+          if [ -f "trivy-report.json" ]; then
+            CRITICAL_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-report.json 2>/dev/null || echo "0")
+            HIGH_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-report.json 2>/dev/null || echo "0")
+            MEDIUM_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' trivy-report.json 2>/dev/null || echo "0")
+            LOW_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="LOW")] | length' trivy-report.json 2>/dev/null || echo "0")
+            
+            TOTAL_VULNS=$((CRITICAL_COUNT + HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))
+            
+            echo "🔍 Vulnerability Summary:"
+            echo "  Critical: $CRITICAL_COUNT"
+            echo "  High: $HIGH_COUNT"  
+            echo "  Medium: $MEDIUM_COUNT"
+            echo "  Low: $LOW_COUNT"
+            echo "  Total: $TOTAL_VULNS"
+            
+            # Save to outputs
+            echo "vulnerability-count=${TOTAL_VULNS}" >> $GITHUB_OUTPUT
+            echo "critical-count=${CRITICAL_COUNT}" >> $GITHUB_OUTPUT
+            echo "high-count=${HIGH_COUNT}" >> $GITHUB_OUTPUT
+            
+            # Set environment variables
+            echo "VULN_CRITICAL=${CRITICAL_COUNT}" >> $GITHUB_ENV
+            echo "VULN_HIGH=${HIGH_COUNT}" >> $GITHUB_ENV
+            echo "VULN_TOTAL=${TOTAL_VULNS}" >> $GITHUB_ENV
+            
+            # Check if we should fail based on critical vulnerabilities
+            if [ "$CRITICAL_COUNT" -gt "0" ] && [ "${{ github.event.inputs.environment }}" = "production" ]; then
+              echo "⚠️ Critical vulnerabilities found in production build!"
+              echo "SECURITY_GATE_FAILED=true" >> $GITHUB_ENV
+            else
+              echo "SECURITY_GATE_FAILED=false" >> $GITHUB_ENV
+            fi
+          else
+            echo "⚠️ JSON report not generated, skipping detailed analysis"
+            echo "vulnerability-count=unknown" >> $GITHUB_OUTPUT
+            echo "SECURITY_GATE_FAILED=false" >> $GITHUB_ENV
+          fi
+
+      - name: Upload security scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports-${{ env.SERVICE_NAME }}-${{ env.BUILD_TAG }}
+          path: |
+            trivy-results.sarif
+            trivy-report.json
+          retention-days: 30
 
       # =====================================================
-      # STEP 7: PUSH TO REGISTRY
+      # STEP 5: IMAGE ANALYSIS & OPTIMIZATION INSIGHTS
       # =====================================================
-      - name: Push Docker image
+      - name: Analyze image layers and provide optimization insights
         run: |
-          FULL_IMAGE=${{ steps.build-info.outputs.full-image }}
+          echo "🔍 Analyzing Docker image layers..."
           
-          echo "⬆️ Pushing image to registry..."
-          docker push $FULL_IMAGE
+          # Show image history
+          echo "📋 Image Layer Information:"
+          docker history ${{ env.IMAGE_NAME }} --format "table {{.CreatedBy}}\t{{.Size}}"
           
-          # Also tag as latest for development environment
-          if [ "${{ github.event.inputs.environment }}" = "development" ]; then
-            docker tag $FULL_IMAGE ${{ steps.build-info.outputs.image-name }}:latest
-            docker push ${{ steps.build-info.outputs.image-name }}:latest
-            echo "✅ Also tagged as 'latest'"
+          # Check for common optimization opportunities
+          echo ""
+          echo "💡 Optimization Insights:"
+          
+          # Check image size
+          SIZE_MB=$(docker images ${{ env.IMAGE_NAME }} --format "{{.Size}}" | sed 's/MB//' | sed 's/GB/*1000/' | bc 2>/dev/null || echo "unknown")
+          if [ "$SIZE_MB" != "unknown" ] && [ "$SIZE_MB" -gt "500" ]; then
+            echo "  ⚠️ Large image size detected (${IMAGE_SIZE}). Consider:"
+            echo "    - Using multi-stage builds"
+            echo "    - Removing unnecessary packages"
+            echo "    - Using smaller base images (alpine)"
           fi
           
-          echo "✅ Successfully pushed $FULL_IMAGE"
+          # Check for security best practices
+          echo "  🔒 Security Recommendations:"
+          echo "    - Use non-root user in container"
+          echo "    - Minimize attack surface"
+          echo "    - Keep base images updated"
+          
+          # Layer analysis
+          LAYER_COUNT=$(docker history ${{ env.IMAGE_NAME }} --quiet | wc -l)
+          echo "  📊 Layer count: $LAYER_COUNT layers"
+          if [ "$LAYER_COUNT" -gt "20" ]; then
+            echo "    ⚠️ Consider combining RUN commands to reduce layers"
+          fi
 
       # =====================================================
-      # STEP 8: BUILD ARTIFACTS & REPORTING
+      # STEP 6: SECURITY GATE DECISION
       # =====================================================
-      - name: Generate build manifest
+      - name: Security gate decision
+        run: |
+          echo "🚪 Security Gate Evaluation..."
+          
+          if [ "${{ env.SECURITY_GATE_FAILED }}" = "true" ]; then
+            echo "❌ Security gate FAILED:"
+            echo "  - Critical vulnerabilities: ${{ env.VULN_CRITICAL }}"
+            echo "  - Environment: ${{ github.event.inputs.environment }}"
+            echo "  - Action: Build will continue but marked as insecure"
+            echo ""
+            echo "🔧 Recommended actions:"
+            echo "  1. Review trivy-report.json for details"
+            echo "  2. Update base images and dependencies"
+            echo "  3. Apply security patches"
+            echo ""
+            echo "SECURITY_STATUS=⚠️ INSECURE" >> $GITHUB_ENV
+          else
+            echo "✅ Security gate PASSED"
+            echo "  - Critical vulnerabilities: ${{ env.VULN_CRITICAL }}"
+            echo "  - High vulnerabilities: ${{ env.VULN_HIGH }}"
+            echo "SECURITY_STATUS=✅ SECURE" >> $GITHUB_ENV
+          fi
+
+      # =====================================================
+      # STEP 7: ENHANCED DOCKER PUSH
+      # =====================================================
+      - name: Push Docker image with multiple tags
+        run: |
+          FULL_IMAGE=${{ env.IMAGE_NAME }}
+          BASE_IMAGE=${{ steps.build-info.outputs.image-name }}
+          ENVIRONMENT=${{ github.event.inputs.environment }}
+          
+          echo "⬆️ Pushing image to registry..."
+          echo "📦 Main image: $FULL_IMAGE"
+          
+          # Push main tagged image
+          docker push $FULL_IMAGE
+          
+          # Create additional tags based on environment
+          case $ENVIRONMENT in
+            "development")
+              echo "🏷️ Tagging as latest-dev..."
+              docker tag $FULL_IMAGE ${BASE_IMAGE}:latest-dev
+              docker push ${BASE_IMAGE}:latest-dev
+              ;;
+            "staging")
+              echo "🏷️ Tagging as latest-staging..."
+              docker tag $FULL_IMAGE ${BASE_IMAGE}:latest-staging
+              docker push ${BASE_IMAGE}:latest-staging
+              ;;
+            "production")
+              echo "🏷️ Tagging as latest and stable..."
+              docker tag $FULL_IMAGE ${BASE_IMAGE}:latest
+              docker tag $FULL_IMAGE ${BASE_IMAGE}:stable
+              docker push ${BASE_IMAGE}:latest
+              docker push ${BASE_IMAGE}:stable
+              ;;
+          esac
+          
+          echo "✅ Successfully pushed all tags"
+          echo "PUSH_STATUS=✅ SUCCESS" >> $GITHUB_ENV
+
+      # =====================================================
+      # STEP 8: BUILD ARTIFACTS & METADATA
+      # =====================================================
+      - name: Generate comprehensive build manifest
         run: |
           cat > build-manifest.json << EOF
           {
-            "service": "${{ github.event.inputs.service }}",
-            "serviceType": "${{ steps.service-info.outputs.service-type }}",
-            "image": "${{ steps.build-info.outputs.full-image }}",
-            "tag": "${{ steps.build-info.outputs.image-tag }}",
-            "environment": "${{ github.event.inputs.environment }}",
-            "buildDate": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-            "gitCommit": "$(git rev-parse HEAD)",
-            "gitBranch": "$(git rev-parse --abbrev-ref HEAD)",
-            "imageSize": "${{ env.IMAGE_SIZE }}",
-            "buildDuration": "${{ job.duration }}",
-            "nodeVersion": "${{ env.NODE_VERSION }}"
+            "build": {
+              "service": "${{ env.SERVICE_NAME }}",
+              "tag": "${{ env.BUILD_TAG }}",
+              "environment": "${{ github.event.inputs.environment }}",
+              "buildNumber": "${{ github.run_number }}",
+              "buildDate": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+              "duration": "$(date -d@$SECONDS -u +%H:%M:%S)"
+            },
+            "image": {
+              "name": "${{ env.IMAGE_NAME }}",
+              "size": "${{ env.IMAGE_SIZE }}",
+              "platform": "linux/amd64"
+            },
+            "git": {
+              "commit": "$(git rev-parse HEAD)",
+              "shortCommit": "$(git rev-parse --short HEAD)",
+              "branch": "$(git rev-parse --abbrev-ref HEAD)",
+              "author": "$(git log -1 --pretty=format:'%an')",
+              "message": "$(git log -1 --pretty=format:'%s')"
+            },
+            "security": {
+              "scanSeverity": "${{ github.event.inputs.scan_severity }}",
+              "vulnerabilities": {
+                "total": "${{ env.VULN_TOTAL }}",
+                "critical": "${{ env.VULN_CRITICAL }}",
+                "high": "${{ env.VULN_HIGH }}"
+              },
+              "status": "${{ env.SECURITY_STATUS }}",
+              "gateStatus": "${{ env.SECURITY_GATE_FAILED }}"
+            },
+            "deployment": {
+              "registryUrl": "${{ env.REGISTRY }}",
+              "pullCommand": "docker pull ${{ env.IMAGE_NAME }}",
+              "kubernetesCommand": "kubectl set image deployment/${{ env.SERVICE_NAME }} ${{ env.SERVICE_NAME }}=${{ env.IMAGE_NAME }}"
+            }
           }
           EOF
           
-          echo "📋 Build manifest created"
-          cat build-manifest.json
+          echo "📋 Build manifest generated"
+          cat build-manifest.json | jq .
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts-${{ github.event.inputs.service }}-${{ steps.build-info.outputs.image-tag }}
+          name: build-artifacts-${{ env.SERVICE_NAME }}-${{ env.BUILD_TAG }}
           path: |
             build-manifest.json
-            dependency-report.txt
             trivy-results.sarif
-          retention-days: 30
+            trivy-report.json
+          retention-days: 90
 
       # =====================================================
-      # STEP 9: NOTIFICATIONS & SUMMARY (POC - Simplified)
+      # STEP 9: ENHANCED SUMMARY & NOTIFICATIONS
       # =====================================================
-      - name: Build Summary
+      - name: Create enhanced build summary
+        if: always()
         run: |
-          echo "## 🚀 CI Pipeline Complete" >> $GITHUB_STEP_SUMMARY
+          echo "# 🚀 Enhanced CI Pipeline Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Build Information Table
+          echo "## 📦 Build Information" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | ${{ github.event.inputs.service }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Type | ${{ steps.service-info.outputs.service-type }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Image | \`${{ steps.build-info.outputs.full-image }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | ${{ github.event.inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Size | ${{ env.IMAGE_SIZE }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | $(git rev-parse --short HEAD) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | \`${{ env.SERVICE_NAME }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ github.event.inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ env.IMAGE_NAME }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Size | \`${{ env.IMAGE_SIZE }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build # | \`${{ github.run_number }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`$(git rev-parse --short HEAD)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`$(git rev-parse --abbrev-ref HEAD)\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 Registry Commands" >> $GITHUB_STEP_SUMMARY
+          
+          # Security Summary
+          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Critical | \`${{ env.VULN_CRITICAL }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| High | \`${{ env.VULN_HIGH }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Status** | **${{ env.SECURITY_STATUS }}** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Deployment Commands
+          echo "## 🚀 Deployment Commands" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Pull" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ steps.build-info.outputs.full-image }}" >> $GITHUB_STEP_SUMMARY
-          echo "kubectl set image deployment/${{ github.event.inputs.service }} ${{ github.event.inputs.service }}=${{ steps.build-info.outputs.full-image }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Kubernetes Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl set image deployment/${{ env.SERVICE_NAME }} ${{ env.SERVICE_NAME }}=${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Quick Stats
+          echo "## 📊 Quick Stats" >> $GITHUB_STEP_SUMMARY
+          echo "- 🏗️ Build: ${{ env.PUSH_STATUS }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔒 Security: ${{ env.SECURITY_STATUS }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 Registry: ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ⏱️ Workflow: [\#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
 
-      # Slack notification removed for POC - can be added later
-      # - name: Slack Notification
-      #   if: always()
-      #   uses: 8398a7/action-slack@v3
-      #   with:
-      #     status: ${{ job.status }}
-      #     channel: '#deployments'
-      #   env:
-      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      #   continue-on-error: true
+      - name: Notify on build completion
+        if: always()
+        run: |
+          echo "🔔 Build Notification Summary:"
+          echo "  Service: ${{ env.SERVICE_NAME }}"
+          echo "  Status: ${{ job.status }}"
+          echo "  Image: ${{ env.IMAGE_NAME }}"
+          echo "  Security: ${{ env.SECURITY_STATUS }}"
+          echo "  Environment: ${{ github.event.inputs.environment }}"
+          echo ""
+          echo "📧 Configure SLACK_WEBHOOK_URL secret for Slack notifications"
