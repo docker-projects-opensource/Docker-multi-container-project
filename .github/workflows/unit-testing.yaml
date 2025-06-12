@@ -1,4 +1,8 @@
-name: Enhanced Docker Build, unit test
+- name: Set package status for services without package.json
+        if: contains(fromJson('["frontend", "backend"]'), github.event.inputs.service) && steps.check-package.outputs.has-package != 'true'
+        run: |
+          echo "HAS_PACKAGE_JSON=false" >> $GITHUB_ENV
+          echo "ℹ️ Service ${{ github.event.inputs.service }} has no package.json - skipping Node.js testing"name: Enhanced Docker Build, Scan and Push
 on:
   workflow_dispatch:
     inputs:
@@ -110,28 +114,31 @@ jobs:
       # =====================================================
       # STEP 2: APPLICATION TESTING & CODE QUALITY
       # =====================================================
-      - name: Setup Node.js (for application testing)
+      - name: Check if package.json exists first
         if: contains(fromJson('["frontend", "backend"]'), github.event.inputs.service)
+        id: check-package
+        run: |
+          if [ -f "${{ github.event.inputs.service }}/package.json" ]; then
+            echo "has-package=true" >> $GITHUB_OUTPUT
+            echo "✅ Found package.json in ${{ github.event.inputs.service }}"
+          else
+            echo "has-package=false" >> $GITHUB_OUTPUT
+            echo "⚠️ No package.json found in ${{ github.event.inputs.service }} - skipping Node.js setup"
+          fi
+
+      - name: Setup Node.js (for application testing)
+        if: steps.check-package.outputs.has-package == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: ${{ github.event.inputs.service }}/package-lock.json
+          # Remove cache for POC - can add back later when structure is confirmed
         continue-on-error: true
 
       - name: Install dependencies and analyze project structure
-        if: contains(fromJson('["frontend", "backend"]'), github.event.inputs.service)
+        if: steps.check-package.outputs.has-package == 'true'
         working-directory: ${{ github.event.inputs.service }}
         run: |
           echo "📦 Analyzing ${{ github.event.inputs.service }} project structure..."
-          
-          # Check if package.json exists
-          if [ ! -f "package.json" ]; then
-            echo "⚠️ No package.json found - skipping Node.js testing"
-            echo "HAS_PACKAGE_JSON=false" >> $GITHUB_ENV
-            exit 0
-          fi
-          
           echo "HAS_PACKAGE_JSON=true" >> $GITHUB_ENV
           
           # Show package.json info
@@ -157,6 +164,12 @@ jobs:
           if npm list prettier >/dev/null 2>&1; then echo "HAS_PRETTIER=true" >> $GITHUB_ENV; else echo "HAS_PRETTIER=false" >> $GITHUB_ENV; fi
           if npm list jest >/dev/null 2>&1; then echo "HAS_JEST=true" >> $GITHUB_ENV; else echo "HAS_JEST=false" >> $GITHUB_ENV; fi
         continue-on-error: true
+
+      - name: Set package status for services without package.json
+        if: contains(fromJson('["frontend", "backend"]'), github.event.inputs.service) && steps.check-package.outputs.has-package != 'true'
+        run: |
+          echo "HAS_PACKAGE_JSON=false" >> $GITHUB_ENV
+          echo "ℹ️ Service ${{ github.event.inputs.service }} has no package.json - skipping Node.js testing"
 
       - name: Run ESLint (Code Quality)
         if: env.HAS_PACKAGE_JSON == 'true' && (env.HAS_ESLINT == 'true' || contains(env.AVAILABLE_SCRIPTS, 'lint'))
