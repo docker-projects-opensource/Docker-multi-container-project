@@ -1,8 +1,8 @@
 - name: Set package status for services without package.json
-        if: contains(fromJson('["frontend", "backend"]'), github.event.inputs.service) && steps.check-package.outputs.has-package != 'true'
-        run: |
-          echo "HAS_PACKAGE_JSON=false" >> $GITHUB_ENV
-          echo "ℹ️ Service ${{ github.event.inputs.service }} has no package.json - skipping Node.js testing"name: Enhanced Docker Build, Scan and Push
+        # if: contains(fromJson('["frontend", "backend"]'), github.event.inputs.service) && steps.check-package.outputs.has-package != 'true'
+        # run: |
+        #   echo "HAS_PACKAGE_JSON=false" >> $GITHUB_ENV
+        #   echo "ℹ️ Service ${{ github.event.inputs.service }} has no package.json - skipping Node.js testing"name: Enhanced Docker Build, Scan and Push
 on:
   workflow_dispatch:
     inputs:
