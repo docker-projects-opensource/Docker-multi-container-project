@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Constants
-    const API_URL = '/api/messages';
+    const API_URL = window.location.origin + '/api/messages';
+    // const API_URL = '/api/messages';
     const messageForm = document.getElementById('message-form');
     const messagesContainer = document.getElementById('messages');
     
